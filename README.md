@@ -37,9 +37,36 @@ HEAP - 3).
 - Not ported: `-D` (step-by-step trace) and `-d` (debug); the heap is a
   fixed-size Bend array (HVM4 maps 2^32 words lazily), so very large
   programs need `HVM5BIS_HEAP`; heap locations are 31-bit.
-- Proofs: the modules type-check (`bend FILE --check-only` prints ALL
-  PROOFS CHECK, which is a type check). No laws are stated or proved with
-  `--verdict` yet.
+- Proofs: `LAWS.bend` states 30 laws: every OP2 code computes what
+  hvm.c's `term_op2_u32` does, for all operands (shift counts masked to 5
+  bits, `~` ignoring its left operand, division and remainder by zero 0,
+  unknown codes 0), and concrete facts about term words, the printer's
+  names (base-26 lambda names, nick labels read back as written) and the
+  collapse order key. `PROOF.bend` proves them and `bend PROOF.bend
+  --verdict` prints ALL PROOFS CHECK: BendTT's kernel accepts them, and,
+  as `--verdict` checks every def outside Base, every def of the modules
+  they import (Tm, Wnf, Parse, Print, Eval: all of hvm5bis but Main's IO)
+  is total and accepted too. Most laws are concrete (closed terms checked
+  by computation); the 19 OP2 laws are universal. The rest of the
+  semantics (the interaction rules) is checked by the gate, not proved.
+
+## Speed
+
+`tools/bench.zsh` on one machine (x86-64, one thread each; upstream built
+with `clang -O2`, hvm5bis with Bend 2.0.39), `-s` time (evaluation and
+printing) and wall time (process, including hvm5bis's allocation of its
+heap array):
+
+| program | interactions (both) | HVM4 time | hvm5bis time | ratio | HVM4 wall | hvm5bis wall |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| cnot_24 | 234,881,124 | 4.540 s | 6.307 s | 1.39x | 5.01 s | 9.50 s |
+| fib_nat (fib 30n) | 64,105,293 | 2.832 s | 6.306 s | 2.23x | 3.07 s | 7.73 s |
+| gen_mul4k | 409,274,272 | 6.225 s | 25.115 s | 4.03x | 6.72 s | 32.10 s |
+| lambda_eval | 125,823,219 | 5.086 s | 10.933 s | 2.15x | 5.54 s | 13.64 s |
+| u32_fib (34) | 79,522,600 | 3.069 s | 7.882 s | 2.57x | 3.31 s | 10.52 s |
+
+hvm5bis runs 10 to 37 M interactions/s where HVM4 runs 23 to 66 M. Every
+output is byte-for-byte HVM4's.
 
 ## Meaning
 

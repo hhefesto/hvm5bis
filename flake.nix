@@ -22,7 +22,7 @@
       bend = bend-frp.packages.${system}.bend;
       src = lib.fileset.toSource {
         root = ./.;
-        fileset = lib.fileset.unions [ ./src ./tools/Gate.bend ];
+        fileset = lib.fileset.unions [ ./src ./tools/Gate.bend ./LAWS.bend ./PROOF.bend ];
       };
       # a Bend program compiled to a native binary (C via clang)
       bendBinary =
@@ -49,6 +49,19 @@
       };
 
       checks.${system} = {
+        # LAWS.bend's laws, proved in PROOF.bend and rechecked by BendTT's
+        # kernel (it also rechecks every def of Wnf, Tm, Parse, Print and
+        # Eval, which the laws import: totality included)
+        proofs = pkgs.runCommand "hvm5bis-proofs" { nativeBuildInputs = [ bend ]; } ''
+          export HOME=$TMPDIR BEND_NO_TELEMETRY=1
+          cp -r ${src} w
+          chmod -R u+w w
+          cd w
+          bend PROOF.bend --verdict 2>&1 | tee $TMPDIR/proof.log
+          grep -qx 'ALL PROOFS CHECK' $TMPDIR/proof.log
+          ! grep -q 'Use --verdict' $TMPDIR/proof.log
+          touch $out
+        '';
         # every module type-checks (bend's checker; not a --verdict proof)
         modules = pkgs.runCommand "hvm5bis-modules" { nativeBuildInputs = [ bend ]; } ''
           export HOME=$TMPDIR BEND_NO_TELEMETRY=1
