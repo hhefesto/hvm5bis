@@ -1,0 +1,21 @@
+hvm5bis
+
+hvm5bis is a port of HVM4 (https://github.com/HigherOrderCO/HVM4) to
+Bend 2 (https://github.com/bendlang/bend). It is made from HVM4 at commit
+6defdfc7dae2a3cca5dd6e74ed0612385b5646a8 ("collapse: general filter-credit
+scheduler for -C search ordering", 2026-05-29): its src/hvm.c (the
+runtime, parser, printer and collapser) is translated from C to Bend, and
+its tests (devs/test) and benchmarks (devs/bench) are run against it.
+
+HVM4 was created by Victor Taelin (victortaelin) and is developed by
+HigherOrderCO and HVM4's contributors. Every algorithm, interaction rule,
+syntax and test in hvm5bis is theirs; the Bend code is a translation of it.
+
+License. HVM4's repository has no LICENSE file, and GitHub reports no
+license for it (licenseInfo: null) at the commit above. No license is
+claimed here for HVM4's code or for this translation of it; hvm5bis adds
+no LICENSE file until that is settled with HigherOrderCO.
+
+Bend is HigherOrderCO's, created by Victor Taelin, licensed under the
+Apache License, Version 2.0; hvm5bis is written in it and built with it
+(Bend 2.0.39).
