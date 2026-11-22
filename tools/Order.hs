@@ -84,6 +84,12 @@ refs known (Block me ls) =
 
 tokens :: String -> [String]
 tokens [] = []
+tokens ('"' : r) = tokens (skipStr r)
+  where
+    skipStr ('\\' : _ : x) = skipStr x
+    skipStr ('"' : x) = x
+    skipStr (_ : x) = skipStr x
+    skipStr [] = []
 tokens s@(c : r)
   | nameChar c = let (t, r') = span nameChar s in t : tokens r'
   | otherwise = tokens r

@@ -1224,3 +1224,857 @@ def P.clear() -> P(Unit):
 
 def P.adddef(+id: U32, t: T.Tm) -> P(Unit):
   st => POk{st.add_def(st, id, t), Unit{}}
+
+# Small monadic helpers for the term parser
+# ========================================
+
+# does the input start with byte c?
+def P.at(+c: U32) -> P(Bool):
+  +st => POk{st, is.c(st.src(st), c)}
+
+# parse_match(lit) when b is false; false (nothing read) when b is true
+def P.try.if(b: Bool, +lit: List<&2, U32>) -> P(Bool):
+  match b:
+    case True{}:
+      P.pure(Bool, False{})
+    case False{}:
+      P.try(lit)
+
+# the sentinel parse_term_dup_pat answers when it saw no dup pattern
+def sent() -> T.Tm:
+  T.Tl{255, 0, 0}
+
+def is.sent(+t: T.Tm) -> Bool:
+  match t:
+    case T.Tl{+tag, e, v}:
+      U32.is_eq(tag, 255)
+    case x:
+      False{}
+
+def dummy() -> T.Tm:
+  T.Tl{0, 0, 0}
+
+type NC is Data:
+  NC{n: U32, cl: U32}
+
+def pr.fst(+p: NC) -> U32:
+  match p:
+    case NC{n, cl}:
+      n
+
+def pr.snd(+p: NC) -> U32:
+  match p:
+    case NC{n, cl}:
+      cl
+
+# the head of a match case: none, or (tag, ext)
+type CH is Data:
+  CHNo{}
+  CHYes{tag: U32, ext: U32}
+
+def P.case.dig(+dk: U32, +v: U32, +r: List<&2, U32>) -> P(CH):
+  match dk:
+    case 1:
+      P.seq(CH, P.setsrc(r), P.pure(CH, CHYes{31, v}))
+    case 2:
+      P.seq(CH, P.setsrc(lx.tl(r)), P.pure(CH, CHYes{12, 0}))
+    case 3:
+      P.seq(CH, P.setsrc(lx.drop(2n, r)), P.pure(CH, CHYes{12, 1}))
+    case x:
+      P.pure(CH, CHNo{})
+
+def P.case.k(+k: U32, +s: List<&2, U32>) -> P(CH):
+  match k:
+    case 1:
+      do P<CH>:
+        +c : U32 <- P.charlit()
+        P.skip()
+        return CHYes{31, c}
+    case 2:
+      +ds = lx.digits(s)
+      +r = lx.skip(lx.drop(lx.len(ds), s))
+      P.case.dig(case.digk(lx.dec(ds, 0), r), lx.dec(ds, 0), r)
+    case 3:
+      do P<CH>:
+        P.adv()
+        +n : U32 <- P.name()
+        return CHYes{12, n}
+    case 4:
+      P.seq(CH, P.setsrc(lx.drop(2n, s)), P.pure(CH, CHYes{12, 2}))
+    case 5:
+      P.seq(CH, P.setsrc(lx.drop(2n, s)), P.pure(CH, CHYes{12, 3}))
+    case x:
+      P.pure(CH, CHNo{})
+
+# the head of a match case at s (it reads it when there is one)
+def P.case(+s: List<&2, U32>) -> P(CH):
+  P.case.k(case.kind(s), s)
+
+# a fork's binder names after the first: `,y,z` up to `{`
+def P.fname.step3() -> P(Maybe<&2, U32>):
+  do P<Maybe<&2, U32>>:
+    +n : U32 <- P.name()
+    P.skip()
+    return Some{n}
+
+def P.fname.step2() -> P(Maybe<&2, U32>):
+  do P<Maybe<&2, U32>>:
+    P.sepu()
+    P.skip()
+    +b : Bool <- P.at(123)
+    P.if(Maybe<&2, U32>, b, P.pure(Maybe<&2, U32>, None{}), P.fname.step3())
+
+def P.fname.step() -> P(Maybe<&2, U32>):
+  do P<Maybe<&2, U32>>:
+    +b : Bool <- P.at(123)
+    P.if(Maybe<&2, U32>, b, P.pure(Maybe<&2, U32>, None{}), P.fname.step2())
+
+def P.fnames(k: Nat, r: Maybe<&2, U32>, +acc: List<&2, U32>) -> P(List<&2, U32>):
+  match k r:
+    case 0n _:
+      P.pure(List<&2, U32>, List.reverse(&2, U32, acc))
+    case _ None{}:
+      P.pure(List<&2, U32>, List.reverse(&2, U32, acc))
+    case 1n+q Some{+n}:
+      P.bind(Maybe<&2, U32>, List<&2, U32>, P.fname.step(), r2 => P.fnames(q, r2, n <> acc))
+
+# a sup-fork's captured variable: `&x` or `x`, then a separator
+def P.sfv.step2(+saved: U32) -> P(Maybe<&2, FV>):
+  do P<Maybe<&2, FV>>:
+    P.skip()
+    +cl : U32 <- P.tamp()
+    +nam : U32 <- P.name()
+    P.skip()
+    +bs : List<&2, PB> <- P.binds()
+    +v : FV <- P.fv.go(bd.look(bs, nam, 2, 0), nam, cl, saved)
+    P.skip()
+    P.sepu()
+    return Some{v}
+
+def P.sfv.step(+saved: U32) -> P(Maybe<&2, FV>):
+  do P<Maybe<&2, FV>>:
+    +b : Bool <- P.at(93)
+    P.if(Maybe<&2, FV>, b, P.pure(Maybe<&2, FV>, None{}), P.sfv.step2(saved))
+
+def P.sfvs(k: Nat, +saved: U32, r: Maybe<&2, FV>, +acc: List<&2, FV>) -> P(List<&2, FV>):
+  match k r:
+    case 0n _:
+      P.pure(List<&2, FV>, List.reverse(&2, FV, acc))
+    case _ None{}:
+      P.pure(List<&2, FV>, List.reverse(&2, FV, acc))
+    case 1n+q Some{+v}:
+      P.bind(Maybe<&2, FV>, List<&2, FV>, P.sfv.step(saved), r2 => P.sfvs(q, saved, r2, v <> acc))
+
+# a dup pattern's binder: (name, cloned)
+def P.patname() -> P(NC):
+  do P<NC>:
+    P.skip()
+    +cl : U32 <- P.tamp()
+    +n : U32 <- P.name()
+    return NC{n, cl}
+
+# the static fork's affinity checks (at hvm.c's levels)
+def P.forkchk(names: List<&2, U32>, +i: U32, +d: U32, +dd: U32, +dyn: U32, +lab: U32, +l: T.Tm, +r: T.Tm) -> P(Unit):
+  match names:
+    case Nil{}:
+      P.unit()
+    case Con{+n, t}:
+      +lvl = (d + i * dd + 1 : U32)
+      +u0 = T.tm.uses(l, lvl, u.pick(U32.is_eq(dyn, 0), 43, 42), u.pick(U32.is_eq(dyn, 0), lab, 0))
+      +u1 = T.tm.uses(r, (lvl + u.pick(U32.is_eq(dyn, 0), 0, 1) : U32), u.pick(U32.is_eq(dyn, 0), 44, 42), u.pick(U32.is_eq(dyn, 0), lab, 0))
+      P.seq(Unit, P.affine(U32.is_gt(u0, 1), n, "₀", u0), P.seq(Unit, P.affine(U32.is_gt(u1, 1), n, "₁", u1), P.forkchk(t, (i + 1 : U32), d, dd, dyn, lab, l, r)))
+
+# the end of an inline-dup lambda λx&L / λx&(L): checks, auto-dups, term
+def P.lami.fin(+cl: U32, +nam: U32, +d: U32, +dyn: U32, +lt: T.Tm, +lab: U32, +body: T.Tm) -> P(T.Tm):
+  match dyn:
+    case 0:
+      do P<T.Tm>:
+        +u0 : U32 = T.tm.uses(body, (d + 2 : U32), 43, lab)
+        +u1 : U32 = T.tm.uses(body, (d + 2 : U32), 44, lab)
+        +b1 : T.Tm <- P.adup.c(cl, body, (d + 2 : U32), (d + 2 : U32), 44, lab, u1)
+        +b2 : T.Tm <- P.adup.c(cl, b1, (d + 2 : U32), (d + 2 : U32), 43, lab, u0)
+        P.affine1(cl, nam, "₀", u0)
+        P.affine1(cl, nam, "₁", u1)
+        return T.tm.lam(lam.ext((d + 1 : U32), U32.is_eq(u0, 0) && U32.is_eq(u1, 0)), T.tm.dup(lab, T.tm.bjv((d + 1 : U32)), b2))
+    case x:
+      do P<T.Tm>:
+        +u0 : U32 = T.tm.uses(body, (d + 2 : U32), 42, 0)
+        +u1 : U32 = T.tm.uses(body, (d + 3 : U32), 42, 0)
+        +b1 : T.Tm <- P.adup.c(cl, body, (d + 2 : U32), (d + 3 : U32), 42, 0, u0)
+        +b2 : T.Tm <- P.adup.c(cl, b1, (d + 3 : U32), (d + 3 : U32), 42, 0, u1)
+        P.affine1(cl, nam, "₀", u0)
+        P.affine1(cl, nam, "₁", u1)
+        return T.tm.lam(lam.ext((d + 1 : U32), U32.is_eq(u0, 0) && U32.is_eq(u1, 0)), T.tm.ddu(lt, T.tm.bjv((d + 1 : U32)), T.tm.lam((d + 2 : U32), T.tm.lam((d + 3 : U32), b2))))
+
+# The term parser
+# ===============
+#
+# hvm.c's parse_term_* functions call each other; Bend has no mutual
+# recursion, so they are the cases of one def, pz, and Sel names the
+# function (or the point inside one) to run. k is fuel: every call
+# inside pz passes its predecessor q. Each case reads as its C original.
+
+type Sel is Data:
+  STerm{d: U32}
+  SAtom{d: U32}
+  SAtomK{k: U32, d: U32}
+  SNat{v: U32, d: U32}
+  SDry{d: U32}
+  SApp{f: T.Tm, d: U32, mp: U32}
+  SAppK{k: U32, f: T.Tm, d: U32, mp: U32}
+  SArgs{f: T.Tm, d: U32, mp: U32}
+  SCtr{nam: U32, d: U32, acc: List<&2, T.Tm>}
+  SCtrE{nam: U32, d: U32, acc: List<&2, T.Tm>}
+  SLst{d: U32, acc: List<&2, T.Tm>}
+  SLstE{d: U32, acc: List<&2, T.Tm>}
+  SLam{d: U32}
+  SLamB{d: U32}
+  SLamU{d: U32}
+  SLamA{d: U32}
+  SLamS{cl: U32, nam: U32, d: U32}
+  SLamI{cl: U32, nam: U32, d: U32}
+  SLamID{cl: U32, nam: U32, d: U32}
+  SLamIS{cl: U32, nam: U32, d: U32}
+  SLamIK{cl: U32, nam: U32, d: U32, dyn: U32, lt: T.Tm, lab: U32}
+  SMat{d: U32, acc: List<&2, Cs>}
+  SMatK{h: CH, s: List<&2, U32>, d: U32, acc: List<&2, Cs>}
+  SMatU{d: U32}
+  SMatE{d: U32, acc: List<&2, Cs>}
+  SMatD{d: U32, acc: List<&2, Cs>}
+  SDup{d: U32}
+  SDupK{strict: U32, d: U32}
+  SDupEq{strict: U32, cl: U32, nam: U32, d: U32}
+  SDupL{strict: U32, cl: U32, nam: U32, d: U32, s: List<&2, U32>}
+  SDupUns{nam: U32, nv: U32, d: U32}
+  SDupLet{strict: U32, cl: U32, nam: U32, d: U32}
+  SDupAmp{cl: U32, nam: U32, d: U32}
+  SDupDyn{cl: U32, nam: U32, d: U32}
+  SDupSta{cl: U32, nam: U32, d: U32}
+  SDPat{d: U32}
+  SDPatK{d: U32, s0: List<&2, U32>}
+  SDPatKK{k: U32, d: U32, s0: List<&2, U32>}
+  SDPatB{dyn: U32, lt: T.Tm, lab: U32, fresh: U32, d: U32}
+  SDPatD{lt: T.Tm, n0: NC, n1: NC, v: T.Tm, d: U32}
+  SDPatS{lab: U32, n0: NC, n1: NC, v: T.Tm, d: U32}
+  SSup{d: U32}
+  SSupL{d: U32}
+  SSupS{d: U32}
+  SSupD{d: U32}
+  SSupK{dyn: U32, lt: T.Tm, lab: U32, d: U32}
+  SSupK2{dyn: U32, lt: T.Tm, lab: U32, d: U32}
+  SSupR{dyn: U32, lt: T.Tm, lab: U32, d: U32}
+  SFork{dyn: U32, lt: T.Tm, lab: U32, d: U32}
+  SSupFork{dyn: U32, lt: T.Tm, lab: U32, d: U32}
+  SAutoFork{dyn: U32, lt: T.Tm, lab: U32, d: U32}
+  SCore{dyn: U32, lt: T.Tm, lab: U32, d: U32, fvs: List<&2, FV>, saved: U32}
+
+def pz(+k: Nat, +sel: Sel) -> P(T.Tm):
+  match k:
+    case 0n:
+      P.die(T.Tm, "out of parser fuel")
+    case 1n+q:
+      match sel:
+        # parse_term
+        case STerm{+d}:
+          do P<T.Tm>:
+            +a : T.Tm <- pz(q, SAtom{d})
+            pz(q, SApp{a, d, 0})
+        # parse_term_atom
+        case SAtom{+d}:
+          do P<T.Tm>:
+            P.skip()
+            +s : List<&2, U32> <- P.src()
+            P.setsrc(lx.drop(atom.drop(atom.kind(s)), s))
+            pz(q, SAtomK{atom.kind(s), d})
+        case SAtomK{+ak, +d}:
+          match ak:
+            case 1:
+              pz(q, SLam{d})
+            case 2:
+              pz(q, SDup{d})
+            case 3:
+              pz(q, SSup{d})
+            case 4:
+              do P<T.Tm>:
+                +nam : U32 <- P.name()
+                P.skip()
+                +b : Bool <- P.try([123])
+                P.if(T.Tm, b, P.seq(T.Tm, P.skip(), pz(q, SCtr{nam, d, Nil{}})), P.pure(T.Tm, T.tm.ctr(nam, T.Tn{})))
+            case 5:
+              do P<T.Tm>:
+                +nam : U32 <- P.name()
+                return T.tm.ref(nam)
+            case 6:
+              do P<T.Tm>:
+                P.skip()
+                +b : Bool <- P.at(40)
+                P.if(T.Tm, b, pz(q, SDry{d}), P.bind(U32, T.Tm, P.name_num(), n => P.pure(T.Tm, T.tm.nam(n))))
+            case 7:
+              do P<T.Tm>:
+                +x : T.Tm <- pz(q, SAtom{d})
+                return T.tm.inc(x)
+            case 8:
+              P.pure(T.Tm, T.tm.any())
+            case 9:
+              do P<T.Tm>:
+                +t : T.Tm <- pz(q, STerm{d})
+                P.consume([41], ")")
+                return t
+            case 10:
+              do P<T.Tm>:
+                P.adv()
+                P.skip()
+                +b : Bool <- P.at(93)
+                P.if(T.Tm, b, P.seq(T.Tm, P.adv(), P.pure(T.Tm, nil())), pz(q, SLst{d, Nil{}}))
+            case 11:
+              do P<T.Tm>:
+                +c : U32 <- P.charlit()
+                return chr(c)
+            case 12:
+              do P<T.Tm>:
+                +s : List<&2, U32> <- P.src()
+                P.str.go(lx.sl(4294967295n, lx.hd(s), Nil{}, SLAt{lx.tl(s), U32.is_eq(lx.hd(lx.tl(s)), lx.hd(s))}))
+            case 13:
+              do P<T.Tm>:
+                +s : List<&2, U32> <- P.src()
+                +ds : List<&2, U32> = lx.digits(s)
+                +r : List<&2, U32> = lx.drop(lx.len(ds), s)
+                +v : U32 = lx.dec(ds, 0)
+                P.if(T.Tm, is.c(r, 110), P.seq(T.Tm, P.setsrc(lx.tl(r)), pz(q, SNat{v, d})), P.seq(T.Tm, P.setsrc(r), P.seq(T.Tm, P.skip(), P.pure(T.Tm, T.tm.num(v)))))
+            case x:
+              do P<T.Tm>:
+                P.skip()
+                +nam : U32 <- P.name()
+                P.skip()
+                +b0 : Bool <- P.try(L.s0())
+                +b1 : Bool <- P.try.if(b0, L.s1())
+                P.skip()
+                +bs : List<&2, PB> <- P.binds()
+                +fs : U32 <- P.fside()
+                +side : U32 = u.pick(b0, 0, u.pick(b1, 1, 2))
+                P.var.go(bd.look(bs, nam, side, 0), nam, side, fs)
+        # parse_term_nat, after `Nn`
+        case SNat{+v, +d}:
+          do P<T.Tm>:
+            +b : Bool <- P.try([43])
+            +t : T.Tm <- P.if(T.Tm, b, pz(q, STerm{d}), P.pure(T.Tm, T.Tl{13, 0, 0}))
+            return nat.wrap(U32.to_nat(v), t)
+        # parse_term_nam: ^(f x)
+        case SDry{+d}:
+          do P<T.Tm>:
+            P.consume([40], "(")
+            +f : T.Tm <- pz(q, STerm{d})
+            +x : T.Tm <- pz(q, STerm{d})
+            P.consume([41], ")")
+            return T.tm.two(10, 0, f, x)
+        # parse_term_app_prec
+        case SApp{+f, +d, +mp}:
+          do P<T.Tm>:
+            P.skip()
+            +s : List<&2, U32> <- P.src()
+            pz(q, SAppK{app.kind(s, mp), f, d, mp})
+        case SAppK{+ak, +f, +d, +mp}:
+          match ak:
+            case 1:
+              do P<T.Tm>:
+                +s : List<&2, U32> <- P.src()
+                P.setsrc(lx.drop(2n, s))
+                +t : T.Tm <- pz(q, STerm{d})
+                pz(q, SApp{con(f, t), d, mp})
+            case 2:
+              do P<T.Tm>:
+                +s : List<&2, U32> <- P.src()
+                P.setsrc(lx.drop(3n, s))
+                +r : T.Tm <- pz(q, SAtom{d})
+                +r2 : T.Tm <- pz(q, SApp{r, d, 4})
+                pz(q, SApp{T.tm.two(36, 0, f, r2), d, mp})
+            case 3:
+              do P<T.Tm>:
+                +s : List<&2, U32> <- P.src()
+                P.setsrc(lx.drop(3n, s))
+                +r : T.Tm <- pz(q, SAtom{d})
+                +r2 : T.Tm <- pz(q, SApp{r, d, 2})
+                pz(q, SApp{T.tm.two(37, 0, f, r2), d, mp})
+            case 4:
+              do P<T.Tm>:
+                +s : List<&2, U32> <- P.src()
+                P.setsrc(lx.drop(3n, s))
+                +r : T.Tm <- pz(q, SAtom{d})
+                +r2 : T.Tm <- pz(q, SApp{r, d, 1})
+                pz(q, SApp{T.tm.two(38, 0, f, r2), d, mp})
+            case 5:
+              do P<T.Tm>:
+                +s : List<&2, U32> <- P.src()
+                +op : U32 = opr.peek(s)
+                P.setsrc(lx.drop(opr.len(op), s))
+                +r : T.Tm <- pz(q, SAtom{d})
+                +r2 : T.Tm <- pz(q, SApp{r, d, (opr.prec(op) + 1 : U32)})
+                pz(q, SApp{T.tm.op2(op, f, r2), d, mp})
+            case 6:
+              do P<T.Tm>:
+                P.consume([40], "(")
+                +b : Bool <- P.at(41)
+                P.if(T.Tm, b, P.seq(T.Tm, P.consume([41], ")"), pz(q, SApp{f, d, mp})), pz(q, SArgs{f, d, mp}))
+            case x:
+              P.pure(T.Tm, f)
+        case SArgs{+f, +d, +mp}:
+          do P<T.Tm>:
+            +a : T.Tm <- pz(q, STerm{d})
+            P.skip()
+            P.sepu()
+            P.skip()
+            +b : Bool <- P.at(41)
+            P.if(T.Tm, b, P.seq(T.Tm, P.consume([41], ")"), pz(q, SApp{T.tm.app(f, a), d, mp})), pz(q, SArgs{T.tm.app(f, a), d, mp}))
+        # parse_term_ctr's fields
+        case SCtr{+nam, +d, +acc}:
+          do P<T.Tm>:
+            +b : Bool <- P.at(125)
+            P.if(T.Tm, b, P.seq(T.Tm, P.consume([125], "}"), P.pure(T.Tm, T.tm.ctr(nam, kids.of(acc, T.Tn{})))), pz(q, SCtrE{nam, d, acc}))
+        case SCtrE{+nam, +d, +acc}:
+          do P<T.Tm>:
+            +x : T.Tm <- pz(q, STerm{d})
+            P.skip()
+            P.sepu()
+            P.skip()
+            pz(q, SCtr{nam, d, x <> acc})
+        # parse_term_lst's elements
+        case SLst{+d, +acc}:
+          do P<T.Tm>:
+            +b : Bool <- P.at(93)
+            P.if(T.Tm, b, P.seq(T.Tm, P.consume([93], "]"), P.pure(T.Tm, lst.build(acc, nil()))), pz(q, SLstE{d, acc}))
+        case SLstE{+d, +acc}:
+          do P<T.Tm>:
+            +x : T.Tm <- pz(q, STerm{d})
+            P.skip()
+            P.sepu()
+            P.skip()
+            pz(q, SLst{d, x <> acc})
+        # parse_term_lam (after λ)
+        case SLam{+d}:
+          do P<T.Tm>:
+            P.skip()
+            +s : List<&2, U32> <- P.src()
+            P.if(T.Tm, is.c(s, 123), pz(q, SLamB{d}), P.if(T.Tm, is.c(s, 36), P.seq(T.Tm, P.adv(), pz(q, SLamU{d})), pz(q, SLamA{d})))
+        case SLamB{+d}:
+          do P<T.Tm>:
+            P.consume([123], "{")
+            P.skip()
+            +b : Bool <- P.at(125)
+            P.if(T.Tm, b, P.seq(T.Tm, P.consume([125], "}"), P.pure(T.Tm, T.tm.era())), pz(q, SMat{d, Nil{}}))
+        # λ$x. body
+        case SLamU{+d}:
+          do P<T.Tm>:
+            +nam : U32 <- P.name()
+            P.skip()
+            P.push(pb(nam, (d + 1 : U32), 0, 0, 0))
+            +b : Bool <- P.sep()
+            +body : T.Tm <- P.if(T.Tm, b, pz(q, SLam{(d + 2 : U32)}), P.seq(T.Tm, P.consume([46], "."), pz(q, STerm{(d + 2 : U32)})))
+            P.pop(1n)
+            +uses : U32 = T.tm.uses(body, (d + 2 : U32), 42, 0)
+            P.affine(U32.is_gt(uses, 1), nam, "", uses)
+            return T.tm.uns(T.tm.lam((d + 1 : U32), T.tm.lam(lam.ext((d + 2 : U32), U32.is_eq(uses, 0)), T.tm.app(T.tm.bjv((d + 1 : U32)), body))))
+        case SLamA{+d}:
+          do P<T.Tm>:
+            +cl : Bool <- P.try([38])
+            +nam : U32 <- P.name()
+            P.skip()
+            +b : Bool <- P.at(38)
+            P.if(T.Tm, b, P.seq(T.Tm, P.adv(), pz(q, SLamI{u.b2u(cl), nam, d})), pz(q, SLamS{u.b2u(cl), nam, d}))
+        # λx. body (and λ&x, λx,y)
+        case SLamS{+cl, +nam, +d}:
+          do P<T.Tm>:
+            P.push(pb(nam, d, 0, 0, cl))
+            +b : Bool <- P.sep()
+            +body : T.Tm <- P.if(T.Tm, b, pz(q, SLam{(d + 1 : U32)}), P.seq(T.Tm, P.consume([46], "."), pz(q, STerm{(d + 1 : U32)})))
+            P.pop(1n)
+            +uses : U32 = T.tm.uses(body, (d + 1 : U32), 42, 0)
+            +b2 : T.Tm <- P.adup.c(cl, body, (d + 1 : U32), (d + 1 : U32), 42, 0, uses)
+            P.affine1(cl, nam, "", uses)
+            return T.tm.lam(lam.ext((d + 1 : U32), U32.is_eq(uses, 0)), b2)
+        # λx&L / λx& / λx&(L) (after the &)
+        case SLamI{+cl, +nam, +d}:
+          do P<T.Tm>:
+            P.skip()
+            +b : Bool <- P.at(40)
+            P.if(T.Tm, b, pz(q, SLamID{cl, nam, d}), pz(q, SLamIS{cl, nam, d}))
+        case SLamID{+cl, +nam, +d}:
+          do P<T.Tm>:
+            P.consume([40], "(")
+            +lt : T.Tm <- pz(q, STerm{(d + 1 : U32)})
+            P.consume([41], ")")
+            P.skip()
+            pz(q, SLamIK{cl, nam, d, 1, lt, 0})
+        case SLamIS{+cl, +nam, +d}:
+          do P<T.Tm>:
+            +s : List<&2, U32> <- P.src()
+            +lab : U32 <- P.if(U32, is.c(s, 44) || is.c(s, 59) || is.c(s, 46), P.fresh(), P.name_num())
+            P.skip()
+            pz(q, SLamIK{cl, nam, d, 0, dummy(), lab})
+        case SLamIK{+cl, +nam, +d, +dyn, +lt, +lab}:
+          do P<T.Tm>:
+            +dd : U32 = u.pick(U32.is_ne(dyn, 0), 3, 2)
+            P.push(pb(nam, (d + 1 : U32), u.pick(U32.is_ne(dyn, 0), 16777215, lab), 0, cl))
+            +b : Bool <- P.sep()
+            +body : T.Tm <- P.if(T.Tm, b, pz(q, SLam{(d + dd : U32)}), P.seq(T.Tm, P.consume([46], "."), pz(q, STerm{(d + dd : U32)})))
+            P.pop(1n)
+            P.lami.fin(cl, nam, d, dyn, lt, lab, body)
+        # λ{ ... } cases; acc newest first
+        case SMat{+d, +acc}:
+          do P<T.Tm>:
+            P.skip()
+            +s : List<&2, U32> <- P.src()
+            +h : CH <- P.case(s)
+            pz(q, SMatK{h, s, d, acc})
+        case SMatK{+h, +s, +d, +acc}:
+          match h:
+            case CHYes{+tag, +ext}:
+              do P<T.Tm>:
+                P.skip()
+                P.consume([58], ":")
+                +v : T.Tm <- pz(q, STerm{d})
+                P.skip()
+                P.sepu()
+                pz(q, SMat{d, Cs{tag, ext, v} <> acc})
+            case CHNo{}:
+              P.seq(T.Tm, P.setsrc(s), P.if(T.Tm, lst.is_nil(acc), pz(q, SMatU{d}), pz(q, SMatE{d, acc})))
+        case SMatU{+d}:
+          do P<T.Tm>:
+            +f : T.Tm <- pz(q, STerm{d})
+            P.skip()
+            P.sepu()
+            P.skip()
+            P.consume([125], "}")
+            return T.tm.use(f)
+        case SMatE{+d, +acc}:
+          do P<T.Tm>:
+            +b : Bool <- P.at(125)
+            P.if(T.Tm, b, P.seq(T.Tm, P.consume([125], "}"), P.pure(T.Tm, mat.chain(acc, T.tm.num(0)))), pz(q, SMatD{d, acc}))
+        case SMatD{+d, +acc}:
+          do P<T.Tm>:
+            +b : Bool <- P.at(95)
+            P.if(Unit, b, P.seq(Unit, P.adv(), P.seq(Unit, P.skip(), P.consume([58], ":"))), P.unit())
+            +t : T.Tm <- pz(q, STerm{d})
+            P.skip()
+            P.sepu()
+            P.skip()
+            P.consume([125], "}")
+            return mat.chain(acc, t)
+        # parse_term_dup (after !)
+        case SDup{+d}:
+          do P<T.Tm>:
+            P.skip()
+            +st : Bool <- P.try([33])
+            P.skip()
+            +pat : T.Tm <- pz(q, SDPat{d})
+            P.if(T.Tm, is.sent(pat), pz(q, SDupK{u.b2u(st), d}), P.pure(T.Tm, pat))
+        case SDupK{+strict, +d}:
+          do P<T.Tm>:
+            +cl : U32 <- P.tamp()
+            +nam : U32 <- P.name()
+            P.skip()
+            +b : Bool <- P.at(61)
+            P.if(T.Tm, b, P.seq(T.Tm, P.adv(), P.seq(T.Tm, P.skip(), pz(q, SDupEq{strict, cl, nam, d}))), P.seq(T.Tm, P.consume([38], "&"), P.seq(T.Tm, P.skip(), pz(q, SDupAmp{cl, nam, d}))))
+        case SDupEq{+strict, +cl, +nam, +d}:
+          do P<T.Tm>:
+            +s : List<&2, U32> <- P.src()
+            +b : Bool <- P.try(L.lam())
+            P.if(T.Tm, b, pz(q, SDupL{strict, cl, nam, d, s}), pz(q, SDupLet{strict, cl, nam, d}))
+        case SDupL{+strict, +cl, +nam, +d, +s}:
+          do P<T.Tm>:
+            P.skip()
+            +nv : U32 <- P.name()
+            P.skip()
+            +b : Bool <- P.try([59])
+            P.if(T.Tm, b, P.seq(T.Tm, P.skip(), pz(q, SDupUns{nam, nv, d})), P.seq(T.Tm, P.setsrc(s), pz(q, SDupLet{strict, cl, nam, d})))
+        # ! f = λ x ; body
+        case SDupUns{+nam, +nv, +d}:
+          do P<T.Tm>:
+            P.push(pb(nam, d, 0, 0, 0))
+            P.push(pb(nv, (d + 1 : U32), 0, 0, 0))
+            +body : T.Tm <- pz(q, STerm{(d + 2 : U32)})
+            P.pop(2n)
+            +uf : U32 = T.tm.uses(body, (d + 1 : U32), 42, 0)
+            +uv : U32 = T.tm.uses(body, (d + 2 : U32), 42, 0)
+            P.affine(U32.is_gt(uf, 1), nam, "", uf)
+            P.affine(U32.is_gt(uv, 1), nv, "", uv)
+            return T.tm.uns(T.tm.lam((d + 1 : U32), T.tm.lam((d + 2 : U32), body)))
+        # ! x = v; body  (and !!x, !&x)
+        case SDupLet{+strict, +cl, +nam, +d}:
+          do P<T.Tm>:
+            +v : T.Tm <- pz(q, STerm{d})
+            P.skip()
+            P.sepu()
+            P.push(pb(nam, d, 0, 0, cl))
+            +body : T.Tm <- pz(q, STerm{(d + 1 : U32)})
+            P.pop(1n)
+            +uses : U32 = T.tm.uses(body, (d + 1 : U32), 42, 0)
+            +b2 : T.Tm <- P.adup.c(cl, body, (d + 1 : U32), (d + 1 : U32), 42, 0, uses)
+            P.affine1(cl, nam, "", uses)
+            return T.tm.app(let.lam(strict, T.tm.lam((d + 1 : U32), b2)), v)
+        case SDupAmp{+cl, +nam, +d}:
+          do P<T.Tm>:
+            +b : Bool <- P.at(40)
+            P.if(T.Tm, b, pz(q, SDupDyn{cl, nam, d}), pz(q, SDupSta{cl, nam, d}))
+        # ! x &(lab) = v; body
+        case SDupDyn{+cl, +nam, +d}:
+          do P<T.Tm>:
+            P.consume([40], "(")
+            +lt : T.Tm <- pz(q, STerm{d})
+            P.consume([41], ")")
+            P.consume([61], "=")
+            +v : T.Tm <- pz(q, STerm{d})
+            P.skip()
+            P.sepu()
+            P.skip()
+            P.push(pb(nam, d, 16777215, 0, cl))
+            +body : T.Tm <- pz(q, STerm{(d + 2 : U32)})
+            P.pop(1n)
+            +u0 : U32 = T.tm.uses(body, (d + 1 : U32), 42, 0)
+            +u1 : U32 = T.tm.uses(body, (d + 2 : U32), 42, 0)
+            +b1 : T.Tm <- P.adup.c(cl, body, (d + 1 : U32), (d + 2 : U32), 42, 0, u0)
+            +b2 : T.Tm <- P.adup.c(cl, b1, (d + 2 : U32), (d + 2 : U32), 42, 0, u1)
+            P.affine1(cl, nam, "₀", u0)
+            P.affine1(cl, nam, "₁", u1)
+            return T.tm.ddu(lt, v, T.tm.lam((d + 1 : U32), T.tm.lam((d + 2 : U32), b2)))
+        # ! x &L = v; body  (and ! x & = v; body)
+        case SDupSta{+cl, +nam, +d}:
+          do P<T.Tm>:
+            +b : Bool <- P.at(61)
+            +lab : U32 <- P.if(U32, b, P.fresh(), P.name_num())
+            P.consume([61], "=")
+            +v : T.Tm <- pz(q, STerm{d})
+            P.skip()
+            P.sepu()
+            P.skip()
+            P.push(pb(nam, d, lab, 0, cl))
+            +body : T.Tm <- pz(q, STerm{(d + 1 : U32)})
+            P.pop(1n)
+            +u0 : U32 = T.tm.uses(body, (d + 1 : U32), 43, lab)
+            +u1 : U32 = T.tm.uses(body, (d + 1 : U32), 44, lab)
+            +b1 : T.Tm <- P.adup.c(cl, body, (d + 1 : U32), (d + 1 : U32), 44, lab, u1)
+            +b2 : T.Tm <- P.adup.c(cl, b1, (d + 1 : U32), (d + 1 : U32), 43, lab, u0)
+            P.affine1(cl, nam, "₀", u0)
+            P.affine1(cl, nam, "₁", u1)
+            return T.tm.dup(lab, v, b2)
+        # parse_term_dup_pat: ! &L{x,y} = v; body; the sentinel if none
+        case SDPat{+d}:
+          do P<T.Tm>:
+            +s0 : List<&2, U32> <- P.src()
+            P.skip()
+            +b : Bool <- P.try([38])
+            P.if(T.Tm, b, P.seq(T.Tm, P.skip(), pz(q, SDPatK{d, s0})), P.pure(T.Tm, sent()))
+        case SDPatK{+d, +s0}:
+          do P<T.Tm>:
+            +s : List<&2, U32> <- P.src()
+            pz(q, SDPatKK{dup.patk.go(s), d, s0})
+        case SDPatKK{+pk, +d, +s0}:
+          match pk:
+            case 1:
+              do P<T.Tm>:
+                P.consume([40], "(")
+                +lt : T.Tm <- pz(q, STerm{d})
+                P.consume([41], ")")
+                P.skip()
+                +b : Bool <- P.at(123)
+                P.need(b, "{")
+                pz(q, SDPatB{1, lt, 0, 0, d})
+            case 2:
+              pz(q, SDPatB{0, dummy(), 0, 1, d})
+            case 3:
+              do P<T.Tm>:
+                +lab : U32 <- P.name_num()
+                pz(q, SDPatB{0, dummy(), lab, 0, d})
+            case x:
+              P.seq(T.Tm, P.setsrc(s0), P.pure(T.Tm, sent()))
+        case SDPatB{+dyn, +lt, +lab0, +fresh, +d}:
+          do P<T.Tm>:
+            P.consume([123], "{")
+            +n0 : NC <- P.patname()
+            P.skip()
+            P.sepu()
+            +n1 : NC <- P.patname()
+            P.skip()
+            P.sepu()
+            P.consume([125], "}")
+            P.need(U32.is_ne(pr.fst(n0), pr.fst(n1)), "distinct names in dup pattern")
+            +lab : U32 <- P.if(U32, U32.is_ne(fresh, 0), P.fresh(), P.pure(U32, lab0))
+            P.consume([61], "=")
+            +v : T.Tm <- pz(q, STerm{d})
+            P.skip()
+            P.sepu()
+            P.skip()
+            P.if(T.Tm, U32.is_ne(dyn, 0), pz(q, SDPatD{lt, n0, n1, v, d}), pz(q, SDPatS{lab, n0, n1, v, d}))
+        case SDPatD{+lt, +n0, +n1, +v, +d}:
+          do P<T.Tm>:
+            P.push(pb.side(pr.fst(n0), d, 16777215, 0, pr.snd(n0)))
+            P.push(pb.side(pr.fst(n1), d, 16777215, 1, pr.snd(n1)))
+            +body : T.Tm <- pz(q, STerm{(d + 2 : U32)})
+            P.pop(2n)
+            +u0 : U32 = T.tm.uses(body, (d + 1 : U32), 42, 0)
+            +u1 : U32 = T.tm.uses(body, (d + 2 : U32), 42, 0)
+            +b1 : T.Tm <- P.adup.c(pr.snd(n0), body, (d + 1 : U32), (d + 2 : U32), 42, 0, u0)
+            +b2 : T.Tm <- P.adup.c(pr.snd(n1), b1, (d + 2 : U32), (d + 2 : U32), 42, 0, u1)
+            P.affine1(pr.snd(n0), pr.fst(n0), "", u0)
+            P.affine1(pr.snd(n1), pr.fst(n1), "", u1)
+            return T.tm.ddu(lt, v, T.tm.lam((d + 1 : U32), T.tm.lam((d + 2 : U32), b2)))
+        case SDPatS{+lab, +n0, +n1, +v, +d}:
+          do P<T.Tm>:
+            P.push(pb.side(pr.fst(n0), d, lab, 0, pr.snd(n0)))
+            P.push(pb.side(pr.fst(n1), d, lab, 1, pr.snd(n1)))
+            +body : T.Tm <- pz(q, STerm{(d + 1 : U32)})
+            P.pop(2n)
+            +u0 : U32 = T.tm.uses(body, (d + 1 : U32), 43, lab)
+            +u1 : U32 = T.tm.uses(body, (d + 1 : U32), 44, lab)
+            +b1 : T.Tm <- P.adup.c(pr.snd(n1), body, (d + 1 : U32), (d + 1 : U32), 44, lab, u1)
+            +b2 : T.Tm <- P.adup.c(pr.snd(n0), b1, (d + 1 : U32), (d + 1 : U32), 43, lab, u0)
+            P.affine1(pr.snd(n0), pr.fst(n0), "", u0)
+            P.affine1(pr.snd(n1), pr.fst(n1), "", u1)
+            return T.tm.dup(lab, v, b2)
+        # parse_term_sup (after &)
+        case SSup{+d}:
+          do P<T.Tm>:
+            P.skip()
+            +b : Bool <- P.at(123)
+            P.if(T.Tm, b, P.seq(T.Tm, P.consume([123], "{"), P.seq(T.Tm, P.consume([125], "}"), P.pure(T.Tm, T.tm.era()))), pz(q, SSupL{d}))
+        case SSupL{+d}:
+          do P<T.Tm>:
+            +b : Bool <- P.at(40)
+            P.if(T.Tm, b, pz(q, SSupD{d}), pz(q, SSupS{d}))
+        case SSupS{+d}:
+          do P<T.Tm>:
+            +lab : U32 <- P.name_num()
+            pz(q, SSupK{0, dummy(), lab, d})
+        case SSupD{+d}:
+          do P<T.Tm>:
+            P.consume([40], "(")
+            +lt : T.Tm <- pz(q, STerm{d})
+            P.consume([41], ")")
+            pz(q, SSupK{1, lt, 0, d})
+        case SSupK{+dyn, +lt, +lab, +d}:
+          do P<T.Tm>:
+            P.skip()
+            +b : Bool <- P.try(L.lam())
+            P.if(T.Tm, b, pz(q, SFork{dyn, lt, lab, d}), pz(q, SSupK2{dyn, lt, lab, d}))
+        case SSupK2{+dyn, +lt, +lab, +d}:
+          do P<T.Tm>:
+            +s : List<&2, U32> <- P.src()
+            P.if(T.Tm, is.c(s, 33) && U32.is_eq(lx.at(1n, s), 123), P.seq(T.Tm, P.consume([33], "!"), pz(q, SAutoFork{dyn, lt, lab, d})), P.if(T.Tm, is.c(s, 91), P.seq(T.Tm, P.consume([91], "["), pz(q, SSupFork{dyn, lt, lab, d})), pz(q, SSupR{dyn, lt, lab, d})))
+        case SSupR{+dyn, +lt, +lab, +d}:
+          do P<T.Tm>:
+            P.consume([123], "{")
+            +t0 : T.Tm <- pz(q, STerm{d})
+            P.skip()
+            P.sepu()
+            +t1 : T.Tm <- pz(q, STerm{d})
+            P.skip()
+            P.sepu()
+            P.consume([125], "}")
+            return sup.mk(dyn, lt, lab, t0, t1)
+        # parse_term_fork: &Lλx,y{A;B}
+        case SFork{+dyn, +lt, +lab, +d}:
+          do P<T.Tm>:
+            +fs0 : U32 <- P.fside()
+            +n0 : U32 <- P.name()
+            P.skip()
+            +names : List<&2, U32> <- P.fnames(4294967295n, Some{n0}, Nil{})
+            P.consume([123], "{")
+            +dd : U32 = u.pick(U32.is_ne(dyn, 0), 3, 2)
+            P.pushes(fork.binds(names, 0, d, dd, u.pick(U32.is_ne(dyn, 0), 16777215, lab)))
+            +n : U32 = u.len(U32, names)
+            +bd : U32 = (d + n * dd : U32)
+            P.optside(L.amp0())
+            P.setside(0)
+            +left : T.Tm <- pz(q, STerm{bd})
+            P.skip()
+            P.sepu()
+            P.skip()
+            P.optside(L.amp1())
+            P.setside(1)
+            +right : T.Tm <- pz(q, STerm{bd})
+            P.setside(fs0)
+            P.skip()
+            P.sepu()
+            P.consume([125], "}")
+            P.pop(U32.to_nat(n))
+            P.forkchk(names, 0, d, dd, dyn, lab, left, right)
+            return fork.wrap(U32.to_nat(n), (n - 1 : U32), d, dd, dyn, lt, lab, sup.mk(dyn, lt, lab, left, right))
+        # parse_term_sup_fork: &L[x,&y]{A;B}
+        case SSupFork{+dyn, +lt, +lab, +d}:
+          do P<T.Tm>:
+            +fs0 : U32 <- P.fside()
+            P.skip()
+            +fvs : List<&2, FV> <- P.bind(Maybe<&2, FV>, List<&2, FV>, P.sfv.step(fs0), r => P.sfvs(4294967295n, fs0, r, Nil{}))
+            P.consume([93], "]")
+            P.skip()
+            P.consume([123], "{")
+            P.skip()
+            pz(q, SCore{dyn, lt, lab, d, fvs, fs0})
+        # parse_term_auto_fork: &L!{A;B}
+        case SAutoFork{+dyn, +lt, +lab, +d}:
+          do P<T.Tm>:
+            +fs0 : U32 <- P.fside()
+            +bs : List<&2, PB> <- P.binds()
+            P.consume([123], "{")
+            P.skip()
+            pz(q, SCore{dyn, lt, lab, d, af.collect(List.reverse(&2, PB, bs), Nil{}, fs0), fs0})
+        # parse_term_sup_fork_core
+        case SCore{+dyn, +lt, +lab, +d, +fvs, +saved}:
+          do P<T.Tm>:
+            P.setside(2)
+            +dd : U32 = u.pick(U32.is_ne(dyn, 0), 2, 1)
+            P.pushes(fc.binds(fvs, 0, d, dd, u.pick(U32.is_ne(dyn, 0), 16777215, lab)))
+            +n : U32 = u.len(FV, fvs)
+            +bd : U32 = (d + n * dd : U32)
+            P.optside(L.amp0())
+            P.setside(0)
+            +left : T.Tm <- pz(q, STerm{bd})
+            P.skip()
+            P.sepu()
+            P.skip()
+            P.optside(L.amp1())
+            P.setside(1)
+            +right : T.Tm <- pz(q, STerm{bd})
+            P.setside(saved)
+            P.skip()
+            P.sepu()
+            P.consume([125], "}")
+            P.pop(U32.to_nat(n))
+            +lr : LR <- P.fcpost(fvs, 0, d, dd, dyn, lab, bd, left, right)
+            return fc.wrap(List.reverse(&2, FV, fvs), (n - 1 : U32), d, dd, dyn, lt, lab, sup.mk(dyn, lt, lab, lr.l(lr), lr.r(lr)))
+
+# Definitions
+# ===========
+
+# what parse_def stops at: the end, or an #include (its file name)
+type DR is Data:
+  DDone{}
+  DInc{name: List<&2, U32>}
+
+def P.include() -> P(DR):
+  do P<DR>:
+    P.consume([34], "\"")
+    +s : List<&2, U32> <- P.src()
+    P.setsrc(lx.drop(lx.len(lx.until(s)), s))
+    P.consume([34], "\"")
+    return DInc{lx.until(s)}
+
+# one `@name = term`
+def P.def1() -> P(Unit):
+  do P<Unit>:
+    P.adv()
+    +id : U32 <- P.name()
+    P.consume([61], "=")
+    P.clear()
+    +t : T.Tm <- pz(4294967295n, STerm{0})
+    P.adddef(id, t)
+
+# parse_def: definitions up to the end or the next #include
+def P.defs(k: Nat) -> P(DR):
+  match k:
+    case 0n:
+      P.die(DR, "out of fuel: too many definitions")
+    case 1n+q:
+      do P<DR>:
+        P.skip()
+        +s : List<&2, U32> <- P.src()
+        P.if(DR, lx.is_end(s), P.pure(DR, DDone{}), P.if(DR, lx.starts(L.include(), s), P.seq(DR, P.setsrc(lx.drop(8n, s)), P.include()), P.if(DR, is.c(s, 64), P.seq(DR, P.def1(), P.defs(q)), P.fail(DR, "definition or #include"))))
