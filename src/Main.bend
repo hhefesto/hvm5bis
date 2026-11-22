@@ -184,20 +184,6 @@ def er.msg(+er: U32) -> String:
     case x:
       "RUNTIME_ERROR: out of fuel"
 
-def out.chars(cs: List<&2, U32>) -> List<&2, Char>:
-  match cs:
-    case Nil{}:
-      Nil{}
-    case Con{+c, t}:
-      Chr{c} <> out.chars(t)
-
-def out.write(cs: List<&2, U32>) -> IO(Unit):
-  match cs:
-    case Nil{}:
-      IO.pure(Unit, Unit{})
-    case Con{h, t}:
-      IO.write(String.from_list(out.chars(Con{h, t})))
-
 def fail.er(+er: U32) -> IO(Unit):
   match er:
     case 0:
@@ -209,8 +195,9 @@ def fail.er(+er: U32) -> IO(Unit):
 
 def run.norm.t(s: Array<U32>, +nx: U32, it: Nat, +fr: U32, +er: U32, +hl: U32, r: Array<U32> & List<&2, U32>) -> E.M() & List<&2, U32>:
   (h, txt) = r
-  ((h, s, nx, it, fr, er, hl), List.append(&2, U32, txt, [10]))
+  ((h, s, nx, it, fr, er, hl), 10 <> txt)
 
+# the text (newest code point first) as a String, in one pass
 def run.norm.q(z: Bool, +env: P.Env, m: E.M(), +hi: U32, +lo: U32) -> E.M() & List<&2, U32>:
   match z:
     case True{}:
@@ -366,15 +353,6 @@ def opt.silent.of(+o: Opt) -> Bool:
     case Opt{f, c, l, st, si, b}:
       si
 
-# the result of a run: the machine and the text
-def fin(+o: Opt, +t0: Nat, r: E.M() & List<&2, U32>) -> IO(Unit):
-  ((h, s, +nx, +it, fr, +er, hl), txt) = r
-  do IO<Unit>:
-    out.write(txt)
-    fail.er(er)
-    t1 : Nat <- IO.now()
-    stats(opt.stats.of(o), opt.silent.of(o), it, (nx - 1 : U32), Nat.sub(t1, t0))
-
 def opt.collapse.of(+o: Opt) -> Bool:
   match o:
     case Opt{f, c, l, st, si, b}:
@@ -405,15 +383,6 @@ def run.eval.k(c: Bool, +o: Opt, +env: P.Env, +mid: U32, r: E.M() & U32, seen: A
 def run.eval(+o: Opt, +env: P.Env, +mid: U32, m: E.M(), seen: Array<U32>) -> E.M() & List<&2, U32>:
   run.eval.k(opt.collapse.of(o), o, env, mid, E.m.alloc(m, 1), seen)
 
-def run.lay(+o: Opt, +dep: Nat, +env: P.Env, +mid: U32, r: Array<U32> & U32) -> IO(Unit):
-  (h, nx0) = r
-  +nx = {nx0 : U32}
-  do IO<Unit>:
-    s : Array<U32> = Array.new(U32, 24n, 0)
-    seen : Array<U32> = Array.new(U32, Nat.sub(dep, 6n), 0)
-    t0 : Nat <- IO.now()
-    fin(o, t0, run.eval(o, env, mid, (h, s, nx, 0n, 1, 0, (U32.shln(1, Nat.sub(dep, 1n)) - 64 : U32)), seen))
-
 # realpath for a relative name: against $PWD (./ dropped)
 def lay1.k(+id: U32, +nx: U32, h: Array<U32>, r: List<&2, T.Wr> & U32) -> Array<U32> & U32:
   (ws, nx20) = r
@@ -433,35 +402,6 @@ def lay(ds: List<&2, Ps.Df>, st: Array<U32> & U32) -> Array<U32> & U32:
       st
     case Con{Ps.Df{+id, +tm}, t}:
       lay(t, lay1(id, tm, st))
-# the book laid out; @main evaluated
-def run.book(+o: Opt, +dep: Nat, st: Ps.St, +mid: U32) -> IO(Unit):
-  match st:
-    case Ps.St{src, binds, flab, fside, tab, +names, +ntab, +book}:
-      run.lay(o, dep, P.Env{names, ntab}, mid, lay(List.reverse(&2, Ps.Df, book), (Array.new(U32, dep, 0), (ntab + 1 : U32))))
-
-def run.main.k(z: Bool, +o: Opt, +dep: Nat, st: Ps.St, +id: U32) -> IO(Unit):
-  match z:
-    case True{}:
-      run.book(o, dep, st, id)
-    case False{}:
-      do IO<Unit>:
-        IO.print_err("Error: @main not defined")
-        IO.exit(1)
-
-def run.main(+o: Opt, +dep: Nat, r: Ps.SI) -> IO(Unit):
-  match r:
-    case Ps.SI{+st, +id}:
-      run.main.k(has.def(Ps.st.book(st), id), o, dep, st, id)
-
-def run.loaded(+o: Opt, +dep: Nat, r: LdR) -> IO(Unit):
-  match r:
-    case LErr{e}:
-      do IO<Unit>:
-        IO.print_err(e)
-        IO.exit(1)
-    case LOk{st}:
-      run.main(o, dep, Ps.tab.find("main", st))
-
 # each definition at nx: its word, then its fields; BOOK[id] (word 1 + id)
 # holds its location
 def lc(k: Nat, bs: List<&2, U32>, +l: U32, +c: U32) -> U32 & U32:
@@ -494,8 +434,84 @@ def loc.fill(cs: List<&2, U32>, +loc: List<&2, U32>) -> List<&2, U32>:
         case x:
           x <> loc.fill(t, loc)
 
+def abs.path.k(pwd: Result<&1, &1, U32 & String, String>, +f: List<&2, U32>) -> List<&2, U32>:
+  match pwd:
+    case Fail{e}:
+      f
+    case Done{d}:
+      List.append(&2, U32, P.tx(d), 47 <> f)
+
+def abs.path(pwd: Result<&1, &1, U32 & String, String>, +f: List<&2, U32>) -> List<&2, U32>:
+  match f:
+    case Con{47, t}:
+      f
+    case Con{46, Con{47, t}}:
+      abs.path.k(pwd, t)
+    case x:
+      abs.path.k(pwd, x)
+
+def rev.str(cs: List<&2, U32>, acc: String) -> String:
+  match cs:
+    case Nil{}:
+      acc
+    case Con{+c, t}:
+      rev.str(t, SCon{Chr{c}, acc})
+
+def out.write(cs: List<&2, U32>) -> IO(Unit):
+  match cs:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case Con{h, t}:
+      IO.write(rev.str(Con{h, t}, SNil{}))
+# the result of a run: the machine and the text
+def fin(+o: Opt, +t0: Nat, r: E.M() & List<&2, U32>) -> IO(Unit):
+  ((h, s, +nx, +it, fr, +er, hl), txt) = r
+  do IO<Unit>:
+    out.write(txt)
+    fail.er(er)
+    t1 : Nat <- IO.now()
+    stats(opt.stats.of(o), opt.silent.of(o), it, (nx - 1 : U32), Nat.sub(t1, t0))
+
+def run.lay(+o: Opt, +dep: Nat, +env: P.Env, +mid: U32, r: Array<U32> & U32) -> IO(Unit):
+  (h, nx0) = r
+  +nx = {nx0 : U32}
+  do IO<Unit>:
+    s : Array<U32> = Array.new(U32, 26n, 0)
+    seen : Array<U32> = Array.new(U32, Nat.sub(dep, 6n), 0)
+    t0 : Nat <- IO.now()
+    fin(o, t0, run.eval(o, env, mid, (h, s, nx, 0n, 1, 0, (U32.shln(1, Nat.sub(dep, 1n)) - 64 : U32)), seen))
+
+# the book laid out; @main evaluated
+def run.book(+o: Opt, +dep: Nat, st: Ps.St, +mid: U32) -> IO(Unit):
+  match st:
+    case Ps.St{src, binds, flab, fside, tab, +names, +ntab, +book}:
+      run.lay(o, dep, P.Env{names, ntab}, mid, lay(List.reverse(&2, Ps.Df, book), (Array.new(U32, dep, 0), (ntab + 1 : U32))))
+
+def run.main.k(z: Bool, +o: Opt, +dep: Nat, st: Ps.St, +id: U32) -> IO(Unit):
+  match z:
+    case True{}:
+      run.book(o, dep, st, id)
+    case False{}:
+      do IO<Unit>:
+        IO.print_err("Error: @main not defined")
+        IO.exit(1)
+
+def run.main(+o: Opt, +dep: Nat, r: Ps.SI) -> IO(Unit):
+  match r:
+    case Ps.SI{+st, +id}:
+      run.main.k(has.def(Ps.st.book(st), id), o, dep, st, id)
+
+def run.loaded(+o: Opt, +dep: Nat, r: LdR) -> IO(Unit):
+  match r:
+    case LErr{e}:
+      do IO<Unit>:
+        IO.print_err(e)
+        IO.exit(1)
+    case LOk{st}:
+      run.main(o, dep, Ps.tab.find("main", st))
+
 def ld.err(+e: String, +at: List<&2, U32>, +path: List<&2, U32>, +bs: List<&2, U32>) -> String:
-  String.from_list(out.chars(loc.fill(P.tx(e), loc.text(path, lc(Nat.sub(List.length(&2, U32, bs), List.length(&2, U32, at)), bs, 1, 1)))))
+  rev.str(List.reverse(&2, U32, loc.fill(P.tx(e), loc.text(path, lc(Nat.sub(List.length(&2, U32, bs), List.length(&2, U32, at)), bs, 1, 1)))), SNil{})
 
 def ld.fin(r: Ps.PR<Ps.DR>, +path: List<&2, U32>, +bs: List<&2, U32>) -> IO(LdR):
   match r:
@@ -516,22 +532,6 @@ def ld(k: Nat, s: LS) -> IO(LdR):
           IO.bind(Maybe<&2, List<&2, U32>>, LdR, file.read(Ps.lx.str(full)), got => ld(q, ld.read(full, path, seen, r, fs, got)))
         case LDone{r, +path, +bs}:
           ld.fin(r, path, bs)
-
-def abs.path.k(pwd: Result<&1, &1, U32 & String, String>, +f: List<&2, U32>) -> List<&2, U32>:
-  match pwd:
-    case Fail{e}:
-      f
-    case Done{d}:
-      List.append(&2, U32, P.tx(d), 47 <> f)
-
-def abs.path(pwd: Result<&1, &1, U32 & String, String>, +f: List<&2, U32>) -> List<&2, U32>:
-  match f:
-    case Con{47, t}:
-      f
-    case Con{46, Con{47, t}}:
-      abs.path.k(pwd, t)
-    case x:
-      abs.path.k(pwd, x)
 
 def run.src(+o: Opt, +dep: Nat, +path: List<&2, U32>, got: Maybe<&2, List<&2, U32>>) -> IO(Unit):
   match got:

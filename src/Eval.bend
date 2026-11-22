@@ -539,17 +539,17 @@ def col.itrs(z: Bool, +it: Nat) -> List<&2, U32>:
 
 def col.line.k(+env: P.Env, +stats: Bool, +it: Nat, s: Array<U32>, +nx: U32, +fr: U32, +er: U32, +hl: U32, r: Array<U32> & List<&2, U32>) -> M() & List<&2, U32>:
   (h, txt) = r
-  ((h, s, nx, it, fr, er, hl), List.append(&2, U32, txt, col.itrs(stats, it)))
+  ((h, s, nx, it, fr, er, hl), List.append(&2, U32, List.reverse(&2, U32, col.itrs(stats, it)), txt))
 
-# print_term_quoted, then the count when shown
 def col.line(+env: P.Env, +stats: Bool, m: M(), +hi: U32, +lo: U32) -> M() & List<&2, U32>:
   (h, s, nx, +it, fr, er, hl) = m
   col.line.k(env, stats, it, s, nx, fr, er, hl, P.print(env, 1, h, hi, lo))
 
 def col.out.k(q: Q, +pr: U32, +seq: U32, out: List<&2, U32>, r: M() & List<&2, U32>) -> CO():
   (m, txt) = r
-  (m, q, pr, seq, P.rev.onto(txt, out), 1)
+  (m, q, pr, seq, List.append(&2, U32, txt, out), 1)
 
+# the machine and the text, newest code point first
 def col.out(z: Bool, +env: P.Env, +cfg: Cfg, m: M(), q: Q, +pr: U32, +seq: U32, out: List<&2, U32>, +hi: U32, +lo: U32) -> CO():
   match z:
     case True{}:
@@ -570,8 +570,7 @@ def col.er(m: M()) -> M() & U32:
 
 def col.fin(st: CO()) -> M() & List<&2, U32>:
   (m, qu, pr, seq, out, md) = st
-  (m, List.reverse(&2, U32, out))
-
+  (m, out)
 def q.pick(z: Bool, +a: Q, +b: Q) -> Q:
   match z:
     case True{}:

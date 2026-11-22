@@ -565,7 +565,7 @@ def dup.steps(+qt: U32, +hi: U32, +lo: U32, +d: U32) -> PSel:
 
 def print.k(w: PW()) -> Array<U32> & List<&2, U32>:
   (h, pn, pm, out, s) = w
-  (h, List.reverse(&2, U32, out))
+  (h, out)
 def nat.tail.k(z: Bool, +hi: U32, +lo: U32, +d: U32) -> PSel:
   match z:
     case True{}:
@@ -624,6 +624,7 @@ def ctr.or.none.k(z: Bool, +hi: U32, +lo: U32, +d: U32) -> PSel:
       PL{[]}
 
 # print_term_ex / print_term_quoted_ex: the term, then its floating dups;
+# answers the heap and the text, newest code point first
 # answers the heap and the text
 def ctr.or.none(+t: U32, +hi: U32, +lo: U32, +d: U32) -> PSel:
   ctr.or.none.k(U32.is_le(13, t) && U32.is_le(t, 29), hi, lo, d)
@@ -1000,6 +1001,7 @@ def pr(+k: Nat, +env: Env, +sel: PSel, w: PW()) -> PW():
               pr(q, env, ctr.or.none(x, hi, lo, d), w)
 
 # print_term_ex / print_term_quoted_ex: the term, then its floating dups;
+# answers the heap and the text, newest code point first
 # answers the heap and the text
 def print(+env: Env, +qt: U32, h: Array<U32>, +hi: U32, +lo: U32) -> Array<U32> & List<&2, U32>:
   print.k(pr(4294967295n, env, PL{[PT{hi, lo, 0}, PFin{True{}}]}, (h, PN{Nil{}, 0, Nil{}, 0, 0}, PM{qt, 0, 0}, Nil{}, PL{[]})))

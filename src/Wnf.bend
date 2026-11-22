@@ -1475,7 +1475,7 @@ def wnf.go(fuel: Nat, w: W()) -> W():
           +sp = {sp0 : U32}
           +nx = {nx0 : U32}
           +hl = {hl0 : U32}
-          wnf.go(p, step.ok(U32.is_lt(nx, hl) && U32.is_lt(sp, 8388600), md, h, s, sp, nx, it, fr, er, hl, th, tl))
+          wnf.go(p, step.ok(U32.is_lt(nx, hl) && U32.is_lt(sp, 33554400), md, h, s, sp, nx, it, fr, er, hl, th, tl))
 
 def wnf.fuel() -> Nat:
   Nat.mul(4294967295n, 65535n)
