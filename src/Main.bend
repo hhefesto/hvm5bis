@@ -13,7 +13,8 @@ import ./Eval.bend as E
 # It reads FILE (and its #includes), lays the book out in the heap,
 # evaluates @main (normal form, or collapsed with -C) and prints what
 # HVM4 prints. The heap holds 2^(HVM5BIS_HEAP - 1) words (HVM5BIS_HEAP
-# defaults to 27).
+# defaults to 27), the WNF stack 2^(HVM5BIS_STACK - 1) frames
+# (HVM5BIS_STACK defaults to HVM5BIS_HEAP - 3).
 
 # Options
 # =======
@@ -472,11 +473,48 @@ def fin(+o: Opt, +t0: Nat, r: E.M() & List<&2, U32>) -> IO(Unit):
     t1 : Nat <- IO.now()
     stats(opt.stats.of(o), opt.silent.of(o), it, (nx - 1 : U32), Nat.sub(t1, t0))
 
+def ld.err(+e: String, +at: List<&2, U32>, +path: List<&2, U32>, +bs: List<&2, U32>) -> String:
+  rev.str(List.reverse(&2, U32, loc.fill(P.tx(e), loc.text(path, lc(Nat.sub(List.length(&2, U32, bs), List.length(&2, U32, at)), bs, 1, 1)))), SNil{})
+
+def ld.fin(r: Ps.PR<Ps.DR>, +path: List<&2, U32>, +bs: List<&2, U32>) -> IO(LdR):
+  match r:
+    case Ps.POk{st, d}:
+      IO.pure(LdR, LOk{st})
+    case Ps.PEr{+e, +at}:
+      IO.pure(LdR, LErr{ld.err(e, at, path, bs)})
+
+def ld(k: Nat, s: LS) -> IO(LdR):
+  match k:
+    case 0n:
+      IO.pure(LdR, LErr{"too many includes"})
+    case 1n+q:
+      match s:
+        case LStep{+path, +bs, +seen, r, fs}:
+          ld(q, ld.step(path, bs, seen, r, fs))
+        case LRead{+full, +path, bs, +seen, r, fs}:
+          IO.bind(Maybe<&2, List<&2, U32>>, LdR, file.read(Ps.lx.str(full)), got => ld(q, ld.read(full, path, seen, r, fs, got)))
+        case LDone{r, +path, +bs}:
+          ld.fin(r, path, bs)
+
+def stack.depth.k(+dep: Nat, r: Maybe<&2, U32>) -> Nat:
+  match r:
+    case None{}:
+      Nat.sub(dep, 3n)
+    case Some{n}:
+      U32.to_nat(n)
+def stack.depth(+dep: Nat, r: Result<&1, &1, U32 & String, String>) -> Nat:
+  match r:
+    case Fail{e}:
+      Nat.sub(dep, 3n)
+    case Done{s}:
+      stack.depth.k(dep, U32.read(s))
+
 def run.lay(+o: Opt, +dep: Nat, +env: P.Env, +mid: U32, r: Array<U32> & U32) -> IO(Unit):
   (h, nx0) = r
   +nx = {nx0 : U32}
   do IO<Unit>:
-    s : Array<U32> = Array.new(U32, 26n, 0)
+    sd : Result<&1, &1, U32 & String, String> <- IO.get_env("HVM5BIS_STACK")
+    s : Array<U32> = Array.new(U32, stack.depth(dep, sd), 0)
     seen : Array<U32> = Array.new(U32, Nat.sub(dep, 6n), 0)
     t0 : Nat <- IO.now()
     fin(o, t0, run.eval(o, env, mid, (h, s, nx, 0n, 1, 0, (U32.shln(1, Nat.sub(dep, 1n)) - 64 : U32)), seen))
@@ -509,29 +547,6 @@ def run.loaded(+o: Opt, +dep: Nat, r: LdR) -> IO(Unit):
         IO.exit(1)
     case LOk{st}:
       run.main(o, dep, Ps.tab.find("main", st))
-
-def ld.err(+e: String, +at: List<&2, U32>, +path: List<&2, U32>, +bs: List<&2, U32>) -> String:
-  rev.str(List.reverse(&2, U32, loc.fill(P.tx(e), loc.text(path, lc(Nat.sub(List.length(&2, U32, bs), List.length(&2, U32, at)), bs, 1, 1)))), SNil{})
-
-def ld.fin(r: Ps.PR<Ps.DR>, +path: List<&2, U32>, +bs: List<&2, U32>) -> IO(LdR):
-  match r:
-    case Ps.POk{st, d}:
-      IO.pure(LdR, LOk{st})
-    case Ps.PEr{+e, +at}:
-      IO.pure(LdR, LErr{ld.err(e, at, path, bs)})
-
-def ld(k: Nat, s: LS) -> IO(LdR):
-  match k:
-    case 0n:
-      IO.pure(LdR, LErr{"too many includes"})
-    case 1n+q:
-      match s:
-        case LStep{+path, +bs, +seen, r, fs}:
-          ld(q, ld.step(path, bs, seen, r, fs))
-        case LRead{+full, +path, bs, +seen, r, fs}:
-          IO.bind(Maybe<&2, List<&2, U32>>, LdR, file.read(Ps.lx.str(full)), got => ld(q, ld.read(full, path, seen, r, fs, got)))
-        case LDone{r, +path, +bs}:
-          ld.fin(r, path, bs)
 
 def run.src(+o: Opt, +dep: Nat, +path: List<&2, U32>, got: Maybe<&2, List<&2, U32>>) -> IO(Unit):
   match got:

@@ -1462,7 +1462,7 @@ def step.ok(z: Bool, +md: U32, h: Array<U32>, s: Array<U32>, +sp: U32, +nx: U32,
     case True{}:
       step.md(md, h, s, sp, nx, it, fr, er, hl, th, tl)
 
-def wnf.go(fuel: Nat, w: W()) -> W():
+def wnf.go(fuel: Nat, +slim: U32, w: W()) -> W():
   match fuel:
     case 0n:
       (h, s, sp, nx, it, fr, er, md, th, tl, hl) = w
@@ -1475,7 +1475,7 @@ def wnf.go(fuel: Nat, w: W()) -> W():
           +sp = {sp0 : U32}
           +nx = {nx0 : U32}
           +hl = {hl0 : U32}
-          wnf.go(p, step.ok(U32.is_lt(nx, hl) && U32.is_lt(sp, 33554400), md, h, s, sp, nx, it, fr, er, hl, th, tl))
+          wnf.go(p, slim, step.ok(U32.is_lt(nx, hl) && U32.is_lt(sp, slim), md, h, s, sp, nx, it, fr, er, hl, th, tl))
 
 def wnf.fuel() -> Nat:
   Nat.mul(4294967295n, 65535n)
@@ -1484,12 +1484,6 @@ def wnf.out(w: W()) -> S() & U32 & U32:
   (h, s, sp, nx, it, fr, er, md, th, tl, hl) = w
   ((h, s, nx, it, fr, er, hl), th, tl)
 
-# wnf: the weak normal form of (th, tl); the stack is empty between calls
-def wnf(m: S(), +th: U32, +tl: U32) -> S() & U32 & U32:
-  (h, s, nx, it, fr, er, hl) = m
-  wnf.out(wnf.go(wnf.fuel(), (h, s, 0, nx, it, fr, er, 0, th, tl, hl)))
-
-# is this tag already a value (wnf_at's short-cut list)?
 def is.val(+t: U32) -> Bool:
   match t:
     case 9:
@@ -1534,6 +1528,15 @@ def wnf.at.fin(+loc: U32, +ch: U32, +cl: U32, r: S() & U32 & U32) -> S() & U32 &
   +tl = {tl0 : U32}
   ((wnf.at.put(U32.is_eq(th, ch) && U32.is_eq(tl, cl), h, loc, th, tl), s, nx, it, fr, er, hl), th, tl)
 
+def wnf.sz(h: Array<U32>, +nx: U32, it: Nat, +fr: U32, +er: U32, +hl: U32, +th: U32, +tl: U32, r: Array<U32> & U32) -> S() & U32 & U32:
+  (s, n0) = r
+  +n = {n0 : U32}
+  wnf.out(wnf.go(wnf.fuel(), (U32.shr(n) - 8 : U32), (h, s, 0, nx, it, fr, er, 0, th, tl, hl)))
+
+# wnf: the weak normal form of (th, tl); the stack is empty between calls
+def wnf(m: S(), +th: U32, +tl: U32) -> S() & U32 & U32:
+  (h, s, nx, it, fr, er, hl) = m
+  wnf.sz(h, nx, it, fr, er, hl, th, tl, Array.size(U32, s))
 def wnf.at.go(z: Bool, s: Array<U32>, +nx: U32, it: Nat, +fr: U32, +er: U32, +hl: U32, +loc: U32, h: Array<U32>, +ch: U32, +cl: U32) -> S() & U32 & U32:
   match z:
     case True{}:
@@ -1549,3 +1552,5 @@ def wnf.at.k(s: Array<U32>, +nx: U32, it: Nat, +fr: U32, +er: U32, +hl: U32, +lo
 def wnf.at(m: S(), +loc: U32) -> S() & U32 & U32:
   (h, s, nx, it, fr, er, hl) = m
   wnf.at.k(s, nx, it, fr, er, hl, loc, rd(h, loc))
+# wnf: the weak normal form of (th, tl); the stack is empty between calls
+# and holds as many frames as its array has slot pairs
