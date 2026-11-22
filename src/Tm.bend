@@ -261,33 +261,20 @@ def tm.size(t: Tm) -> U32:
       (tm.size(h) + tm.size(r) : U32)
 
 # t's own word when its fields start at loc
-def tm.word(t: Tm, +loc: U32) -> U32 & U32:
-  match t:
-    case Tl{+tag, +e, val}:
-      (tm.hd(tag, e), val)
-    case Tb{+tag, +e, kids}:
-      (tm.hd(tag, e), loc)
-    case x:
-      (0, 0)
-
-# One heap write: (loc, hi, lo)
 type Wr is Data:
   Wr{loc: U32, hi: U32, lo: U32}
 
-def tm.put(+loc: U32, w: U32 & U32, acc: List<&2, Wr>) -> List<&2, Wr>:
-  (hi, lo) = w
-  Wr{loc, hi, lo} <> acc
-
-# the writes that lay t out: a node's fields go at a, their subtrees
-# from a + arity on; in a field list, a is the next field's slot and b
-# the next subtree's start
-def tm.emit(t: Tm, +a: U32, +b: U32, acc: List<&2, Wr>) -> List<&2, Wr>:
+def tm.place(t: Tm, +slot: U32, st: List<&2, Wr> & U32) -> List<&2, Wr> & U32:
   match t:
-    case Tl{tag, e, val}:
-      acc
-    case Tb{+tag, e, kids}:
-      tm.emit(kids, a, (a + tm.arity(tag) : U32), acc)
+    case Tl{+tag, +e, +val}:
+      (acc, nx0) = st
+      +nx = {nx0 : U32}
+      (Wr{slot, tm.hd(tag, e), val} <> acc, nx)
+    case Tb{+tag, +e, kids}:
+      (acc, nx0) = st
+      +nx = {nx0 : U32}
+      tm.place(kids, nx, (Wr{slot, tm.hd(tag, e), nx} <> acc, (nx + tm.arity(tag) : U32)))
     case Tn{}:
-      acc
-    case Tc{+h, r}:
-      tm.put(a, tm.word(h, b), tm.emit(h, b, 0, tm.emit(r, (a + 1 : U32), (b + tm.size(h) : U32), acc)))
+      st
+    case Tc{h, r}:
+      tm.place(r, (slot + 1 : U32), tm.place(h, slot, st))

@@ -96,13 +96,14 @@ def seen.has(ps: List<&2, List<&2, U32>>, +p: List<&2, U32>) -> Bool:
 
 # a suspended file: its path and the bytes left after the #include
 type Fr is Data:
-  Fr{path: List<&2, U32>, rest: List<&2, U32>}
+  Fr{path: List<&2, U32>, bytes: List<&2, U32>, rest: List<&2, U32>}
 
-# where the loader is: parsing (r: the last parse), reading a file, done
+# where the loader is: parsing (r: the last parse of the file at path,
+# whose bytes are bs), reading a file, done
 type LS is Type:
-  LStep{path: List<&2, U32>, seen: List<&2, List<&2, U32>>, r: Ps.PR<Ps.DR>, fs: List<&2, Fr>}
-  LRead{full: List<&2, U32>, path: List<&2, U32>, seen: List<&2, List<&2, U32>>, r: Ps.PR<Ps.DR>, fs: List<&2, Fr>}
-  LDone{r: Ps.PR<Ps.DR>}
+  LStep{path: List<&2, U32>, bs: List<&2, U32>, seen: List<&2, List<&2, U32>>, r: Ps.PR<Ps.DR>, fs: List<&2, Fr>}
+  LRead{full: List<&2, U32>, path: List<&2, U32>, bs: List<&2, U32>, seen: List<&2, List<&2, U32>>, r: Ps.PR<Ps.DR>, fs: List<&2, Fr>}
+  LDone{r: Ps.PR<Ps.DR>, path: List<&2, U32>, bs: List<&2, U32>}
 
 type LdR is Data:
   LOk{st: Ps.St}
@@ -113,60 +114,52 @@ type LdR is Data:
 def defs(st: Ps.St) -> Ps.PR<Ps.DR>:
   Ps.P.defs(4294967295n, st)
 
-def ld.resume(+p: List<&2, U32>, rest: List<&2, U32>, seen: List<&2, List<&2, U32>>, t: List<&2, Fr>, r: Ps.PR<Ps.DR>) -> LS:
+def ld.resume(+p: List<&2, U32>, +b: List<&2, U32>, rest: List<&2, U32>, seen: List<&2, List<&2, U32>>, t: List<&2, Fr>, r: Ps.PR<Ps.DR>) -> LS:
   match r:
     case Ps.POk{st, d}:
-      LStep{p, seen, defs(Ps.st.set_src(st, rest)), t}
-    case Ps.PEr{e}:
-      LDone{Ps.PEr{e}}
+      LStep{p, b, seen, defs(Ps.st.set_src(st, rest)), t}
+    case Ps.PEr{e, at}:
+      LDone{Ps.PEr{e, at}, p, b}
 
-def ld.done(r: Ps.PR<Ps.DR>, +path: List<&2, U32>, seen: List<&2, List<&2, U32>>, fs: List<&2, Fr>) -> LS:
+def ld.done(r: Ps.PR<Ps.DR>, +path: List<&2, U32>, +bs: List<&2, U32>, seen: List<&2, List<&2, U32>>, fs: List<&2, Fr>) -> LS:
   match fs:
     case Nil{}:
-      LDone{r}
-    case Con{Fr{p, rest}, t}:
-      ld.resume(p, rest, seen, t, r)
+      LDone{r, path, bs}
+    case Con{Fr{+p, +b, rest}, t}:
+      ld.resume(p, b, rest, seen, t, r)
 
-def ld.inc(z: Bool, +full: List<&2, U32>, +path: List<&2, U32>, seen: List<&2, List<&2, U32>>, fs: List<&2, Fr>, +st: Ps.St) -> LS:
+def ld.inc(z: Bool, +full: List<&2, U32>, +path: List<&2, U32>, +bs: List<&2, U32>, seen: List<&2, List<&2, U32>>, fs: List<&2, Fr>, +st: Ps.St) -> LS:
   match z:
     case True{}:
-      LStep{path, seen, defs(st), fs}
+      LStep{path, bs, seen, defs(st), fs}
     case False{}:
-      LRead{full, full, full <> seen, Ps.POk{st, Ps.DDone{}}, Fr{path, Ps.st.src(st)} <> fs}
+      LRead{full, full, Nil{}, full <> seen, Ps.POk{st, Ps.DDone{}}, Fr{path, bs, Ps.st.src(st)} <> fs}
 
-def ld.step(+path: List<&2, U32>, +seen: List<&2, List<&2, U32>>, r: Ps.PR<Ps.DR>, fs: List<&2, Fr>) -> LS:
+def ld.step(+path: List<&2, U32>, +bs: List<&2, U32>, +seen: List<&2, List<&2, U32>>, r: Ps.PR<Ps.DR>, fs: List<&2, Fr>) -> LS:
   match r:
-    case Ps.PEr{e}:
-      LDone{Ps.PEr{e}}
+    case Ps.PEr{e, at}:
+      LDone{Ps.PEr{e, at}, path, bs}
     case Ps.POk{st, Ps.DDone{}}:
-      ld.done(Ps.POk{st, Ps.DDone{}}, path, seen, fs)
+      ld.done(Ps.POk{st, Ps.DDone{}}, path, bs, seen, fs)
     case Ps.POk{st, Ps.DInc{+nm}}:
-      ld.inc(seen.has(seen, path.join(path, nm)), path.join(path, nm), path, seen, fs, st)
+      ld.inc(seen.has(seen, path.join(path, nm)), path.join(path, nm), path, bs, seen, fs, st)
 
 def ld.read(+full: List<&2, U32>, +path: List<&2, U32>, seen: List<&2, List<&2, U32>>, r: Ps.PR<Ps.DR>, fs: List<&2, Fr>, got: Maybe<&2, List<&2, U32>>) -> LS:
   match r got:
     case x None{}:
-      LDone{Ps.PEr{"Error: could not open '" ++ Ps.lx.str(full) ++ "'"}}
-    case Ps.POk{st, d} Some{bs}:
-      LStep{path, seen, defs(Ps.st.set_src(st, bs)), fs}
-    case Ps.PEr{e} Some{bs}:
-      LDone{Ps.PEr{e}}
+      LDone{Ps.PEr{"Error: could not open '" ++ Ps.lx.str(full) ++ "'", Nil{}}, path, Nil{}}
+    case Ps.POk{st, d} Some{+bs}:
+      LStep{path, bs, seen, defs(Ps.st.set_src(st, bs)), fs}
+    case Ps.PEr{e, at} Some{bs}:
+      LDone{Ps.PEr{e, at}, path, bs}
 
+# (line, col) after the first n bytes, as parse_advance counts them
 def put.all(ws: List<&2, T.Wr>, h: Array<U32>) -> Array<U32>:
   match ws:
     case Nil{}:
       h
     case Con{T.Wr{+loc, +hi, +lo}, t}:
       put.all(t, W.wr(h, loc, hi, lo))
-
-# each definition at nx: its word, then its fields; BOOK[id] (word 1 + id)
-# holds its location
-def lay(ds: List<&2, Ps.Df>, h: Array<U32>, +nx: U32) -> Array<U32> & U32:
-  match ds:
-    case Nil{}:
-      (h, nx)
-    case Con{Ps.Df{+id, +tm}, t}:
-      lay(t, W.wr(put.all(T.tm.put(nx, T.tm.word(tm, (nx + 1 : U32)), T.tm.emit(tm, (nx + 1 : U32), 0, Nil{})), h), (id + 1 : U32), 0, nx), (nx + 1 + T.tm.size(tm) : U32))
 
 def has.def(ds: List<&2, Ps.Df>, +id: U32) -> Bool:
   match ds:
@@ -412,46 +405,104 @@ def run.eval.k(c: Bool, +o: Opt, +env: P.Env, +mid: U32, r: E.M() & U32, seen: A
 def run.eval(+o: Opt, +env: P.Env, +mid: U32, m: E.M(), seen: Array<U32>) -> E.M() & List<&2, U32>:
   run.eval.k(opt.collapse.of(o), o, env, mid, E.m.alloc(m, 1), seen)
 
-def run.lay(+o: Opt, +t0: Nat, +dep: Nat, +env: P.Env, +mid: U32, r: Array<U32> & U32) -> IO(Unit):
+def run.lay(+o: Opt, +dep: Nat, +env: P.Env, +mid: U32, r: Array<U32> & U32) -> IO(Unit):
   (h, nx0) = r
   +nx = {nx0 : U32}
-  fin(o, t0, run.eval(o, env, mid, (h, Array.new(U32, 24n, 0), nx, 0n, 1, 0, (U32.shln(1, Nat.sub(dep, 1n)) - 64 : U32)), Array.new(U32, Nat.sub(dep, 6n), 0)))
+  do IO<Unit>:
+    s : Array<U32> = Array.new(U32, 24n, 0)
+    seen : Array<U32> = Array.new(U32, Nat.sub(dep, 6n), 0)
+    t0 : Nat <- IO.now()
+    fin(o, t0, run.eval(o, env, mid, (h, s, nx, 0n, 1, 0, (U32.shln(1, Nat.sub(dep, 1n)) - 64 : U32)), seen))
 
+# realpath for a relative name: against $PWD (./ dropped)
+def lay1.k(+id: U32, +nx: U32, h: Array<U32>, r: List<&2, T.Wr> & U32) -> Array<U32> & U32:
+  (ws, nx20) = r
+  +nx2 = {nx20 : U32}
+  (W.wr(put.all(ws, h), (id + 1 : U32), 0, nx), nx2)
+
+def lay1(+id: U32, +tm: T.Tm, st: Array<U32> & U32) -> Array<U32> & U32:
+  (h, nx0) = st
+  +nx = {nx0 : U32}
+  lay1.k(id, nx, h, T.tm.place(tm, nx, (Nil{}, (nx + 1 : U32))))
+
+# each definition at nx: its word, then its fields; BOOK[id] (word 1 + id)
+# holds its location
+def lay(ds: List<&2, Ps.Df>, st: Array<U32> & U32) -> Array<U32> & U32:
+  match ds:
+    case Nil{}:
+      st
+    case Con{Ps.Df{+id, +tm}, t}:
+      lay(t, lay1(id, tm, st))
 # the book laid out; @main evaluated
-def run.book(+o: Opt, +t0: Nat, +dep: Nat, st: Ps.St, +mid: U32) -> IO(Unit):
+def run.book(+o: Opt, +dep: Nat, st: Ps.St, +mid: U32) -> IO(Unit):
   match st:
     case Ps.St{src, binds, flab, fside, tab, +names, +ntab, +book}:
-      run.lay(o, t0, dep, P.Env{names, ntab}, mid, lay(List.reverse(&2, Ps.Df, book), Array.new(U32, dep, 0), (ntab + 1 : U32)))
+      run.lay(o, dep, P.Env{names, ntab}, mid, lay(List.reverse(&2, Ps.Df, book), (Array.new(U32, dep, 0), (ntab + 1 : U32))))
 
-def run.main.k(z: Bool, +o: Opt, +t0: Nat, +dep: Nat, st: Ps.St, +id: U32) -> IO(Unit):
+def run.main.k(z: Bool, +o: Opt, +dep: Nat, st: Ps.St, +id: U32) -> IO(Unit):
   match z:
     case True{}:
-      run.book(o, t0, dep, st, id)
+      run.book(o, dep, st, id)
     case False{}:
       do IO<Unit>:
         IO.print_err("Error: @main not defined")
         IO.exit(1)
 
-def run.main(+o: Opt, +t0: Nat, +dep: Nat, r: Ps.SI) -> IO(Unit):
+def run.main(+o: Opt, +dep: Nat, r: Ps.SI) -> IO(Unit):
   match r:
     case Ps.SI{+st, +id}:
-      run.main.k(has.def(Ps.st.book(st), id), o, t0, dep, st, id)
+      run.main.k(has.def(Ps.st.book(st), id), o, dep, st, id)
 
-def run.loaded(+o: Opt, +t0: Nat, +dep: Nat, r: LdR) -> IO(Unit):
+def run.loaded(+o: Opt, +dep: Nat, r: LdR) -> IO(Unit):
   match r:
     case LErr{e}:
       do IO<Unit>:
         IO.print_err(e)
         IO.exit(1)
     case LOk{st}:
-      run.main(o, t0, dep, Ps.tab.find("main", st))
+      run.main(o, dep, Ps.tab.find("main", st))
 
-def ld.fin(r: Ps.PR<Ps.DR>) -> IO(LdR):
+# each definition at nx: its word, then its fields; BOOK[id] (word 1 + id)
+# holds its location
+def lc(k: Nat, bs: List<&2, U32>, +l: U32, +c: U32) -> U32 & U32:
+  match k bs:
+    case 0n x:
+      (l, c)
+    case x Nil{}:
+      (l, c)
+    case 1n+q Con{+b, t}:
+      match b:
+        case 10:
+          lc(q, t, (l + 1 : U32), 1)
+        case y:
+          lc(q, t, l, (c + 1 : U32))
+
+def loc.text(+path: List<&2, U32>, r: U32 & U32) -> List<&2, U32>:
+  (+l, c0) = r
+  +c = {c0 : U32}
+  List.append(&2, U32, P.tx(" ("), List.append(&2, U32, path, P.tx(":" ++ U32.show(l) ++ ":" ++ U32.show(c) ++ ")")))
+
+# the PARSE_ERROR header's location: (file:line:col) where the error was
+def loc.fill(cs: List<&2, U32>, +loc: List<&2, U32>) -> List<&2, U32>:
+  match cs:
+    case Nil{}:
+      Nil{}
+    case Con{+c, t}:
+      match c:
+        case 1:
+          List.append(&2, U32, loc, loc.fill(t, loc))
+        case x:
+          x <> loc.fill(t, loc)
+
+def ld.err(+e: String, +at: List<&2, U32>, +path: List<&2, U32>, +bs: List<&2, U32>) -> String:
+  String.from_list(out.chars(loc.fill(P.tx(e), loc.text(path, lc(Nat.sub(List.length(&2, U32, bs), List.length(&2, U32, at)), bs, 1, 1)))))
+
+def ld.fin(r: Ps.PR<Ps.DR>, +path: List<&2, U32>, +bs: List<&2, U32>) -> IO(LdR):
   match r:
     case Ps.POk{st, d}:
       IO.pure(LdR, LOk{st})
-    case Ps.PEr{e}:
-      IO.pure(LdR, LErr{e})
+    case Ps.PEr{+e, +at}:
+      IO.pure(LdR, LErr{ld.err(e, at, path, bs)})
 
 def ld(k: Nat, s: LS) -> IO(LdR):
   match k:
@@ -459,24 +510,41 @@ def ld(k: Nat, s: LS) -> IO(LdR):
       IO.pure(LdR, LErr{"too many includes"})
     case 1n+q:
       match s:
-        case LStep{+path, +seen, r, fs}:
-          ld(q, ld.step(path, seen, r, fs))
-        case LRead{+full, +path, +seen, r, fs}:
+        case LStep{+path, +bs, +seen, r, fs}:
+          ld(q, ld.step(path, bs, seen, r, fs))
+        case LRead{+full, +path, bs, +seen, r, fs}:
           IO.bind(Maybe<&2, List<&2, U32>>, LdR, file.read(Ps.lx.str(full)), got => ld(q, ld.read(full, path, seen, r, fs, got)))
-        case LDone{r}:
-          ld.fin(r)
+        case LDone{r, +path, +bs}:
+          ld.fin(r, path, bs)
+
+def abs.path.k(pwd: Result<&1, &1, U32 & String, String>, +f: List<&2, U32>) -> List<&2, U32>:
+  match pwd:
+    case Fail{e}:
+      f
+    case Done{d}:
+      List.append(&2, U32, P.tx(d), 47 <> f)
+
+def abs.path(pwd: Result<&1, &1, U32 & String, String>, +f: List<&2, U32>) -> List<&2, U32>:
+  match f:
+    case Con{47, t}:
+      f
+    case Con{46, Con{47, t}}:
+      abs.path.k(pwd, t)
+    case x:
+      abs.path.k(pwd, x)
+
 def run.src(+o: Opt, +dep: Nat, +path: List<&2, U32>, got: Maybe<&2, List<&2, U32>>) -> IO(Unit):
   match got:
     case None{}:
       do IO<Unit>:
         IO.print_err("Error: could not open '" ++ Ps.lx.str(path) ++ "'")
         IO.exit(1)
-    case Some{bs}:
+    case Some{+bs}:
       do IO<Unit>:
-        t0 : Nat <- IO.now()
-        r : LdR <- ld(65536n, LStep{path, [path], defs(Ps.st.new(bs)), Nil{}})
-        run.loaded(o, t0, dep, r)
-
+        pwd : Result<&1, &1, U32 & String, String> <- IO.get_env("PWD")
+        +ap : List<&2, U32> = abs.path(pwd, path)
+        r : LdR <- ld(65536n, LStep{ap, bs, [ap], defs(Ps.st.new(bs)), Nil{}})
+        run.loaded(o, dep, r)
 def run.k(ok: Bool, nofile: Bool, +o: Opt, +dep: Nat, +f: String, +b: String) -> IO(Unit):
   match ok nofile:
     case False{} _:

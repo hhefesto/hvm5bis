@@ -101,7 +101,7 @@ def st.add_def(s: St, +id: U32, t: T.Tm) -> St:
 
 type PR<-X: Type> is Type:
   POk{st: St, x: X}
-  PEr{e: String}
+  PEr{e: String, at: List<&2, U32>}
 
 def P(-X: Type) -> Type:
   St -> PR<X>
@@ -113,8 +113,8 @@ def P.go(-X: Type, -Y: Type, r: PR<X>, f: X -> P(Y)) -> PR<Y>:
   match r:
     case POk{st, x}:
       f(x, st)
-    case PEr{e}:
-      PEr{e}
+    case PEr{e, at}:
+      PEr{e, at}
 
 def P.bind(-X: Type, -Y: Type, m: P(X), f: X -> P(Y)) -> P(Y):
   st => P.go(X, Y, m(st), f)
@@ -139,7 +139,7 @@ def P.unit() -> P(Unit):
   P.pure(Unit, Unit{})
 
 def P.die(-X: Type, msg: String) -> P(X):
-  st => PEr{msg}
+  +st => PEr{msg, st.src(st)}
 
 # Bytes
 # =====
@@ -478,11 +478,11 @@ def lx.utf8.one(+s: List<&2, U32>) -> List<&2, U32>:
   [lx.hd(s)]
 
 def P.red() -> String:
-  String.from_list([Chr{27}, Chr{91}, Chr{49}, Chr{59}, Chr{51}, Chr{49}, Chr{109}]) ++ "PARSE_ERROR" ++ String.from_list([Chr{27}, Chr{91}, Chr{48}, Chr{109}])
+  String.from_list([Chr{27}, Chr{91}, Chr{49}, Chr{59}, Chr{51}, Chr{49}, Chr{109}]) ++ "PARSE_ERROR" ++ String.from_list([Chr{27}, Chr{91}, Chr{48}, Chr{109}, Chr{1}])
 
 # parse_error: expected `what`, detected the next byte
 def P.fail(-X: Type, what: String) -> P(X):
-  +st => PEr{P.red() ++ "\n- expected: " ++ what ++ "\n- detected: " ++ lx.detected(st.src(st))}
+  +st => PEr{P.red() ++ "\n- expected: " ++ what ++ "\n- detected: " ++ lx.detected(st.src(st)), st.src(st)}
 
 def P.need(b: Bool, what: String) -> P(Unit):
   match b:
@@ -553,22 +553,22 @@ def P.name() -> P(U32):
     P.skip()
     return id
 
-def P.name_num.chk.go(z: Bool, +cs: List<&2, U32>) -> P(Unit):
+def P.name_num.chk.go(z: Bool, +cs: List<&2, U32>, +s: List<&2, U32>) -> P(Unit):
   match z:
     case True{}:
-      P.die(Unit, P.red() ++ "\n- base64 name '" ++ lx.str(cs) ++ "' exceeds 24-bit limit (max 0xFFFFFF)")
+      P.seq(Unit, P.setsrc(lx.drop(4n, s)), P.die(Unit, P.red() ++ "\n- base64 name '" ++ lx.str(cs) ++ "' exceeds 24-bit limit (max 0xFFFFFF)"))
     case False{}:
       P.unit()
 
-def P.name_num.chk(+cs: List<&2, U32>) -> P(Unit):
-  P.name_num.chk.go(Nat.is_gt(lx.len(cs), 4n), cs)
-# parse_name_num: a nick name as a 24-bit number (labels, ^names)
+# parse_name_num stops at the character that overflows 24 bits (the 5th)
+def P.name_num.chk(+cs: List<&2, U32>, +s: List<&2, U32>) -> P(Unit):
+  P.name_num.chk.go(Nat.is_gt(lx.len(cs), 4n), cs, s)
 def P.name_num() -> P(U32):
   do P<U32>:
     P.skip()
     +s : List<&2, U32> <- P.src()
     P.need(lx.is_init(lx.hd(s)), "name")
-    P.name_num.chk(lx.name(s))
+    P.name_num.chk(lx.name(s), s)
     P.setsrc(lx.drop(lx.len(lx.name(s)), s))
     P.skip()
     return lx.nick(lx.name(s), 0)

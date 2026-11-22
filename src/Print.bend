@@ -331,7 +331,7 @@ def str.out(cs: List<&2, U32>, acc: List<&2, U32>) -> List<&2, U32>:
     case Nil{}:
       acc
     case Con{+c, t}:
-      str.out(t, rev.onto(List.reverse(&2, U32, esc(c, 1)), acc))
+      str.out(t, rev.onto(esc(c, 1), acc))
 
 # Steps
 # =====
@@ -699,7 +699,7 @@ def ctr.default(+env: Env, +hi: U32, +lo: U32, +d: U32, h: Array<U32>) -> Array<
 def ctr.list.pick(s: Bool, l: Bool, c: Bool, +env: Env, +hi: U32, +lo: U32, +d: U32, cs: List<&2, U32>, es: List<&2, Wd>, h: Array<U32>) -> Array<U32> & PSel:
   match s l c:
     case True{} _ _:
-      (h, PE{34 <> List.reverse(&2, U32, str.out(cs, [34]))})
+      (h, PE{34 <> List.reverse(&2, U32, 34 <> str.out(cs, Nil{}))})
     case False{} True{} _:
       (h, PL{[PE{[91]}, PArgs{es, d, True{}}, PE{[93]}]})
     case False{} False{} True{}:
